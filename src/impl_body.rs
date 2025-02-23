@@ -5,6 +5,7 @@ use syn::Attribute;
 pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let name = &ast.ident;
     let generics = &ast.generics;
+    let generic_flag = &ast.generics.params.len() > &0usize;
 
     eprintln!("a is ->{:#?}", &ast.generics);
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
@@ -84,6 +85,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         impl_generics,
         ty_generics,
         where_clause,
+        generic_flag,
     );
 
     quote! {
@@ -98,19 +100,44 @@ fn impl_debug_func<T>(
     impl_generics: syn::ImplGenerics<'_>,
     ty_generics: syn::TypeGenerics<'_>,
     where_clause: Option<&syn::WhereClause>,
+    generic_flag: bool,
 ) -> TokenStream2
 where
     T: Iterator<Item = TokenStream2>,
 {
-    quote! {
-        impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause  {
-            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                f.debug_struct(#string_name)
-                #(#impl_debug_inner)*
-                .finish()
+    if generic_flag {
+        if where_clause.is_none() {
+            quote! {
+                impl #impl_generics  std::fmt::Debug for #name #ty_generics where T: std::fmt::Debug  {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                        f.debug_struct(#string_name)
+                        #(#impl_debug_inner)*
+                        .finish()
+                    }
+                }
+            }
+        } else {
+            quote! {
+                impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause  {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                        f.debug_struct(#string_name)
+                        #(#impl_debug_inner)*
+                        .finish()
+                    }
+                }
             }
         }
+    } else {
+        quote! {
+            impl std::fmt::Debug for #name   {
+                fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                    f.debug_struct(#string_name)
+                    #(#impl_debug_inner)*
+                    .finish()
+                }
+            }
 
+        }
     }
 }
 

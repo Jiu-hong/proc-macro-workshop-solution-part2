@@ -170,7 +170,6 @@ where
             }
         } else {
             if where_clause.is_none() {
-                println!("here1");
                 quote! {
                     impl #impl_generics  std::fmt::Debug for #name #ty_generics where T: std::fmt::Debug    {
                         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
@@ -181,7 +180,6 @@ where
                     }
                 }
             } else {
-                println!("here2");
                 quote! {
                     impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause {
                         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
