@@ -62,7 +62,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let name = &ast.ident;
     let generics = &ast.generics;
     let mut generic_symbols = vec![];
-    let mut associate_type: Option<syn::Type> = None;
+    let mut generic_type: Option<syn::Type> = None;
     for x in generics.type_params() {
         generic_symbols.push(&x.ident);
     }
@@ -70,6 +70,9 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let mut phantom_only = false;
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
+    eprintln!("impl_generics is {:#?}", impl_generics);
+    eprint!("ty_generics is {:#?}", ty_generics);
+    eprintln!("where_clause is {:#?}", where_clause);
     let fields = match &ast.data {
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
@@ -89,7 +92,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         let (innermost_type, phantom_field_flag, generic_field_flag) =
             get_innermost_type(&ty, &generic_symbols);
         if generic_field_flag {
-            associate_type = innermost_type
+            generic_type = innermost_type
         }
 
         tys.push(ty.clone());
@@ -162,7 +165,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         ty_generics,
         where_clause,
         generic_flag,
-        associate_type,
+        generic_type,
         phantom_only,
     );
 
@@ -179,7 +182,7 @@ fn impl_debug_func<T>(
     ty_generics: syn::TypeGenerics<'_>,
     where_clause: Option<&syn::WhereClause>,
     generic_flag: bool,
-    associate_type: Option<syn::Type>,
+    generic_type: Option<syn::Type>,
     phantom_only: bool,
 ) -> TokenStream2
 where
@@ -201,29 +204,17 @@ where
         // phantom plus other fields contain generic symbol
         } else {
             if where_clause.is_none() {
-                if associate_type.is_some() {
-                    let associate_type = associate_type.unwrap();
-                    let output = quote! {
-                        impl #impl_generics  std::fmt::Debug for #name #ty_generics where #associate_type: std::fmt::Debug  {
-                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                                f.debug_struct(#string_name)
-                                #(#inner_token_stream)*
-                                .finish()
-                            }
-                        }
-                    };
-                    output
-                } else {
-                    quote! {
-                        impl #impl_generics  std::fmt::Debug for #name #ty_generics where T: std::fmt::Debug  {
-                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                                f.debug_struct(#string_name)
-                                #(#inner_token_stream)*
-                                .finish()
-                            }
+                let generic_type = generic_type.unwrap();
+                let output = quote! {
+                    impl #impl_generics  std::fmt::Debug for #name #ty_generics where #generic_type: std::fmt::Debug  {
+                        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                            f.debug_struct(#string_name)
+                            #(#inner_token_stream)*
+                            .finish()
                         }
                     }
-                }
+                };
+                output
             } else {
                 quote! {
                     impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause  {
