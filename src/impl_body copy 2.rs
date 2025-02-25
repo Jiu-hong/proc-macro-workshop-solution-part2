@@ -1,80 +1,62 @@
-use std::vec;
-
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 
-pub fn cycle_path<'a>(
-    segment: &'a syn::PathSegment,
-    generic_symbols: &Vec<&proc_macro2::Ident>,
-    // ) -> Option<&'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>> {
-) -> Option<syn::Type> {
+pub fn cycle_path(path_segment: &syn::PathSegment) {
     if let syn::PathSegment {
         arguments:
             syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
         ..
-    } = &segment
+    } = &path_segment
     {
-        let generic_argument = &args[0];
-        if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
-            path: syn::Path { segments, .. },
-            ..
-        })) = generic_argument
-        {
-            if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
-                let a = syn::Type::Path(syn::TypePath {
-                    path: syn::Path {
-                        segments: segments.clone(),
-                        leading_colon: None,
-                    },
-                    qself: None,
-                });
-                return Some(a);
+        for arg in args {
+            let generic_argument = &arg;
+            if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+                path: syn::Path { segments, .. },
+                ..
+            })) = generic_argument
+            {
+                let path_segment = &segments[0];
+                let ident = &path_segment.ident; // "T"
+                let b = &segments[1];
+                let ident_1 = &b.ident; //Value
+
+                if segments.len() > 0 {
+                    for segment in segments {
+                        eprintln!("outer segment ident -> {:#?}", segment.ident);
+                        if segment.arguments.is_empty() {
+                            // eprintln!("segment -> {:#?}", segment);
+                            // return segment;
+                        } else {
+                            cycle_path(&segment);
+                        }
+                    }
+                }
             }
-            return cycle_path(&segments[0], generic_symbols);
-        } else {
-            return None;
         }
     }
-    None
 }
 
-// segments: &'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>
-pub fn get_path<'a>(
-    ty: &'a syn::Type,
-    generic_symbols: &Vec<&proc_macro2::Ident>,
-    // ) -> Option<&'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>> {
-) -> Option<syn::Type> {
+pub fn get_path(ty: &syn::Type) -> Option<&syn::PathSegment> {
     if let syn::Type::Path(syn::TypePath {
         path: syn::Path { segments, .. },
         ..
     }) = &ty
     {
-        // if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
-        //     return Some(segments);
-        // }
-        if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
-            let a = syn::Type::Path(syn::TypePath {
-                path: syn::Path {
-                    segments: segments.clone(),
-                    leading_colon: None,
-                },
-                qself: None,
-            });
-            return Some(a);
-        }
-        cycle_path(&segments[0], generic_symbols)
-    } else {
-        None
+        let path_segment = &segments[0];
+        let ident = &path_segment.ident; //Vec
+
+        cycle_path(&path_segment);
     }
+    None
 }
 pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let name = &ast.ident;
     let generics = &ast.generics;
     let mut generic_symbols = vec![];
-    let mut associate_type: Option<syn::Type> = None;
     for x in generics.type_params() {
         generic_symbols.push(&x.ident);
     }
+    println!("generic_symbols is {:#?}", generic_symbols);
     let generic_flag = &ast.generics.params.len() > &0usize;
     let mut phantom_only = false;
 
@@ -88,20 +70,54 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         _ => panic!("should be struct"),
     };
     let mut fields_names = vec![];
-
     // let mut fields_names_string = vec![];
     let mut tys = vec![];
     let impl_debug_inner = fields.iter().map(|f| {
         let field_name = f.ident.as_ref().unwrap();
         fields_names.push(field_name);
         let field_name_string = field_name.to_string();
-        let phantom_field_flag = false;
-        let generic_field_flag = false;
+        // fields_names_string.push(field_name_string.clone());
+        let mut phantom_field_flag = false;
+        let mut generic_field_flag = false;
         let ty = f.ty.clone();
-        associate_type = get_path(&ty, &generic_symbols);
-
-        tys.push(ty.clone());
+        eprint!("ty is {:#?}", ty);
+        // if let syn::Type::Path(syn::TypePath {
+        //     path: syn::Path { segments, .. },
+        //     ..
+        // }) = &ty
+        // {
+        //     let ident = &segments[0].ident; //PhantomData
+        //     if ident == "PhantomData" {
+        //         if let syn::PathSegment {
+        //             arguments:
+        //                 syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments {
+        //                     args,
+        //                     ..
+        //                 }),
+        //             ..
+        //         } = &segments[0]
+        //         {
+        //             if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+        //                 path: syn::Path { segments, .. },
+        //                 ..
+        //             })) = &args[0]
+        //             {
+        //                 let ident = &segments[0].ident; // "T"
+        //                 if generic_symbols.contains(&ident) {
+        //                     phantom_field_flag = true
+        //                 }
+        //             }
+        //         }
+        //     }
+        //     // else if type ident is the generic type
+        //     else if generic_symbols.contains(&ident) {
+        //         generic_field_flag = true
+        //     }
+        // };
+        get_path(&ty);
+        tys.push(ty);
         let attr = f.attrs.clone();
+        // println!("attr length is {}", attr.len());
         let field_name_1 = if attr.len() > 0 {
             if let syn::Attribute {
                 meta: syn::Meta::NameValue(named_value),
@@ -170,7 +186,6 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         ty_generics,
         where_clause,
         generic_flag,
-        associate_type,
         phantom_only,
     );
 
@@ -187,7 +202,6 @@ fn impl_debug_func<T>(
     ty_generics: syn::TypeGenerics<'_>,
     where_clause: Option<&syn::WhereClause>,
     generic_flag: bool,
-    associate_type: Option<syn::Type>,
     phantom_only: bool,
 ) -> TokenStream2
 where
@@ -209,26 +223,12 @@ where
         // phantom plus other fields contain generic symbol
         } else {
             if where_clause.is_none() {
-                if associate_type.is_some() {
-                    let associate_type = associate_type.unwrap();
-                    let output = quote! {
-                        impl #impl_generics  std::fmt::Debug for #name #ty_generics where #associate_type: std::fmt::Debug  {
-                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                                f.debug_struct(#string_name)
-                                #(#inner_token_stream)*
-                                .finish()
-                            }
-                        }
-                    };
-                    output
-                } else {
-                    quote! {
-                        impl #impl_generics  std::fmt::Debug for #name #ty_generics where T: std::fmt::Debug  {
-                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                                f.debug_struct(#string_name)
-                                #(#inner_token_stream)*
-                                .finish()
-                            }
+                quote! {
+                    impl #impl_generics  std::fmt::Debug for #name #ty_generics where T: std::fmt::Debug  {
+                        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                            f.debug_struct(#string_name)
+                            #(#inner_token_stream)*
+                            .finish()
                         }
                     }
                 }
