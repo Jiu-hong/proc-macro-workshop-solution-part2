@@ -4,24 +4,20 @@ use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
 use syn::{Token, punctuated::Punctuated};
 
-fn get_innermost_type(
-    ty: &syn::Type,
-    generic_symbols: &Vec<&syn::Ident>,
-) -> (Option<syn::Type>, bool, bool) {
+fn get_innermost_type(ty: &syn::Type) -> Option<syn::Type> {
     if let syn::Type::Path(syn::TypePath {
         path: syn::Path { segments, .. },
         ..
     }) = ty
     {
-        return get_innermost_type_inner(segments, generic_symbols);
+        return get_innermost_type_inner(segments);
     }
-    (None, false, false)
+    None
 }
 
 fn get_innermost_type_inner(
     segments: &Punctuated<syn::PathSegment, Token![::]>,
-    generic_symbols: &Vec<&syn::Ident>,
-) -> (Option<syn::Type>, bool, bool) {
+) -> Option<syn::Type> {
     while !segments[0].arguments.is_none() && segments[0].ident != "PhantomData" {
         if let syn::PathSegment {
             arguments:
@@ -35,19 +31,11 @@ fn get_innermost_type_inner(
                 ..
             })) = a
             {
-                return get_innermost_type_inner(&segments, generic_symbols);
+                return get_innermost_type_inner(&segments);
             };
         };
     }
 
-    let mut phantomflag = false;
-    let mut generic_flag = false;
-    if segments[0].ident == "PhantomData" {
-        phantomflag = true
-    }
-    if generic_symbols.contains(&&segments[0].ident) {
-        generic_flag = true
-    }
     let innermost_type = syn::Type::Path(syn::TypePath {
         path: syn::Path {
             segments: segments.clone(),
@@ -55,9 +43,103 @@ fn get_innermost_type_inner(
         },
         qself: None,
     });
-    (Some(innermost_type), phantomflag, generic_flag)
+    Some(innermost_type)
 }
 
+pub fn cycle_path<'a>(
+    segment: &'a syn::PathSegment,
+    generic_symbols: &Vec<&proc_macro2::Ident>,
+) -> (Option<syn::Type>, bool, bool) {
+    if let syn::PathSegment {
+        arguments:
+            syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+        ..
+    } = &segment
+    {
+        let generic_argument = &args[0];
+        if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+            path: syn::Path { segments, .. },
+            ..
+        })) = generic_argument
+        {
+            let (phantom_flag, generic_flag) = check_if_phantomdata(&segments[0], generic_symbols);
+            if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
+                let associate_type = syn::Type::Path(syn::TypePath {
+                    path: syn::Path {
+                        segments: segments.clone(),
+                        leading_colon: None,
+                    },
+                    qself: None,
+                });
+                return (Some(associate_type), phantom_flag, generic_flag);
+            }
+            return cycle_path(&segments[0], generic_symbols);
+        } else {
+            return (None, false, false);
+        }
+    }
+    (None, false, false)
+}
+
+fn check_if_phantomdata(
+    segment: &syn::PathSegment,
+    generic_symbols: &Vec<&proc_macro2::Ident>,
+) -> (bool, bool) {
+    let mut phantom_flag = false;
+    let mut generic_flag = false;
+    let ident = &segment.ident; //PhantomData
+    if ident == "PhantomData" {
+        if let syn::PathSegment {
+            arguments:
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+            ..
+        } = segment
+        {
+            phantom_flag = true;
+            if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+                path: syn::Path { segments, .. },
+                ..
+            })) = &args[0]
+            {
+                let ident = &segments[0].ident; // "T"
+                if generic_symbols.contains(&ident) {
+                    return (true, false);
+                }
+            }
+        }
+    }
+    // else if type ident is the generic type
+    else if generic_symbols.contains(&&ident) {
+        generic_flag = true
+    }
+    return (phantom_flag, generic_flag);
+}
+
+pub fn get_path<'a>(
+    ty: &'a syn::Type,
+    generic_symbols: &Vec<&proc_macro2::Ident>,
+) -> (Option<syn::Type>, bool, bool) {
+    if let syn::Type::Path(syn::TypePath {
+        path: syn::Path { segments, .. },
+        ..
+    }) = &ty
+    {
+        let (phantom_flag, generic_flag) = check_if_phantomdata(&segments[0], generic_symbols);
+        if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
+            let a = syn::Type::Path(syn::TypePath {
+                path: syn::Path {
+                    segments: segments.clone(),
+                    leading_colon: None,
+                },
+                qself: None,
+            });
+            return (Some(a), phantom_flag, generic_flag);
+        }
+        cycle_path(&segments[0], generic_symbols)
+    } else {
+        (None, false, false)
+    }
+}
 pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let name = &ast.ident;
     let generics = &ast.generics;
@@ -84,13 +166,14 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         let field_name = f.ident.as_ref().unwrap();
         fields_names.push(field_name);
         let field_name_string = field_name.to_string();
-
+        let mut phantom_field_flag = false;
+        let mut generic_field_flag = false;
         let ty = f.ty.clone();
-        let (innermost_type, phantom_field_flag, generic_field_flag) =
-            get_innermost_type(&ty, &generic_symbols);
-        if generic_field_flag {
-            associate_type = innermost_type
-        }
+        eprintln!("ty is {:#?}", ty);
+        let innermost_type = get_innermost_type(&ty);
+        eprintln!("innermost_type is {:#?}", innermost_type);
+        // (associate_type, phantom_field_flag, generic_field_flag) = get_path(&ty,
+        // &generic_symbols);
 
         tys.push(ty.clone());
         let attr = f.attrs.clone();
@@ -140,6 +223,8 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         phantom_fields_flags.push(inner.1);
         generic_fields_flags.push(inner.2);
     }
+    println!("phantom_fields_flags-> {:#?}", phantom_fields_flags);
+    println!("generic_fields_flags -> {:#?}", generic_fields_flags);
 
     // if generic struct
     if generic_flag {
@@ -153,7 +238,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     }
 
     let string_name = name.to_string();
-
+    println!("phantom_only is {}", phantom_only);
     let impl_debug = impl_debug_func(
         name,
         &string_name,
@@ -252,6 +337,7 @@ where
 }
 
 fn transform_format(org_format: String) -> String {
+    // let org_format = "0b{:08b}";
     let vec_org_format = org_format
         .split(['{', ':', '}'])
         .filter(|x| !x.is_empty())
