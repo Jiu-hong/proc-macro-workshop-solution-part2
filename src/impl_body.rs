@@ -6,6 +6,8 @@ use quote::quote;
 pub fn cycle_path<'a>(
     segment: &'a syn::PathSegment,
     generic_symbols: &Vec<&proc_macro2::Ident>,
+    phantom_field_flag: bool,
+    generic_field_flag: bool,
     // ) -> Option<&'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>> {
 ) -> Option<syn::Type> {
     if let syn::PathSegment {
@@ -20,6 +22,12 @@ pub fn cycle_path<'a>(
             ..
         })) = generic_argument
         {
+            check_if_phantomdata(
+                &segments[0],
+                generic_symbols,
+                phantom_field_flag,
+                generic_field_flag,
+            );
             if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
                 let a = syn::Type::Path(syn::TypePath {
                     path: syn::Path {
@@ -30,7 +38,12 @@ pub fn cycle_path<'a>(
                 });
                 return Some(a);
             }
-            return cycle_path(&segments[0], generic_symbols);
+            return cycle_path(
+                &segments[0],
+                generic_symbols,
+                phantom_field_flag,
+                generic_field_flag,
+            );
         } else {
             return None;
         }
@@ -38,10 +51,44 @@ pub fn cycle_path<'a>(
     None
 }
 
+fn check_if_phantomdata(
+    segment: &syn::PathSegment,
+    generic_symbols: &Vec<&proc_macro2::Ident>,
+    phantom_field_flag: bool,
+    generic_field_flag: bool,
+) {
+    let ident = &segment.ident; //PhantomData
+    if ident == "PhantomData" {
+        if let syn::PathSegment {
+            arguments:
+                syn::PathArguments::AngleBracketed(syn::AngleBracketedGenericArguments { args, .. }),
+            ..
+        } = segment
+        {
+            if let syn::GenericArgument::Type(syn::Type::Path(syn::TypePath {
+                path: syn::Path { segments, .. },
+                ..
+            })) = &args[0]
+            {
+                let ident = &segments[0].ident; // "T"
+                if generic_symbols.contains(&ident) {
+                    phantom_field_flag = true
+                }
+            }
+        }
+    }
+    // else if type ident is the generic type
+    else if generic_symbols.contains(&&ident) {
+        generic_field_flag = true
+    }
+}
+
 // segments: &'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>
 pub fn get_path<'a>(
     ty: &'a syn::Type,
     generic_symbols: &Vec<&proc_macro2::Ident>,
+    phantom_field_flag: bool,
+    generic_field_flag: bool,
     // ) -> Option<&'a syn::punctuated::Punctuated<syn::PathSegment, syn::Token![::]>> {
 ) -> Option<syn::Type> {
     if let syn::Type::Path(syn::TypePath {
@@ -49,9 +96,12 @@ pub fn get_path<'a>(
         ..
     }) = &ty
     {
-        // if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
-        //     return Some(segments);
-        // }
+        check_if_phantomdata(
+            &segments[0],
+            generic_symbols,
+            phantom_field_flag,
+            generic_field_flag,
+        );
         if segments.len() > 1 && generic_symbols.contains(&&segments[0].ident) {
             let a = syn::Type::Path(syn::TypePath {
                 path: syn::Path {
@@ -62,7 +112,12 @@ pub fn get_path<'a>(
             });
             return Some(a);
         }
-        cycle_path(&segments[0], generic_symbols)
+        cycle_path(
+            &segments[0],
+            generic_symbols,
+            phantom_field_flag,
+            generic_field_flag,
+        )
     } else {
         None
     }
@@ -95,10 +150,15 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         let field_name = f.ident.as_ref().unwrap();
         fields_names.push(field_name);
         let field_name_string = field_name.to_string();
-        let phantom_field_flag = false;
-        let generic_field_flag = false;
+        let mut phantom_field_flag = false;
+        let mut generic_field_flag = false;
         let ty = f.ty.clone();
-        associate_type = get_path(&ty, &generic_symbols);
+        associate_type = get_path(
+            &ty,
+            &generic_symbols,
+            phantom_field_flag,
+            generic_field_flag,
+        );
 
         tys.push(ty.clone());
         let attr = f.attrs.clone();
