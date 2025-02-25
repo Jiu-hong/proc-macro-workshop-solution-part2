@@ -1,1 +1,1 @@
-my custom debug solution for proc-macro-workshop-solution
+my custom debug solution for [proc-macro-workshop-solution](https://github.com/dtolnay/proc-macro-workshop)
