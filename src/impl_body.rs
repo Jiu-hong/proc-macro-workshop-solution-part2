@@ -2,7 +2,7 @@ use std::vec;
 
 use proc_macro2::TokenStream as TokenStream2;
 use quote::quote;
-use syn::{Token, punctuated::Punctuated};
+use syn::{Attribute, Token, punctuated::Punctuated};
 
 fn get_innermost_type(
     ty: &syn::Type,
@@ -16,6 +16,38 @@ fn get_innermost_type(
         return get_innermost_type_inner(segments, generic_symbols);
     }
     (None, false, false)
+}
+
+fn get_attrs(attrs: &Vec<Attribute>) -> Option<String> {
+    for attr in attrs {
+        if let syn::Attribute {
+            meta:
+                syn::Meta::List(syn::MetaList {
+                    path,
+                    tokens,
+                    delimiter: syn::MacroDelimiter::Paren(_),
+                }),
+            ..
+        } = attr
+        {
+            if path.get_ident().unwrap() == "debug" {
+                let mut tokens_iter = tokens.clone().into_iter();
+                if tokens_iter.next().unwrap().to_string() == "bound" //1st token
+                    && tokens_iter.next().unwrap().to_string() == "="
+                //2nd token
+                {
+                    let a = tokens_iter.next().unwrap();
+                    // return Some(a);
+                    if let proc_macro2::TokenTree::Literal(literal) = a {
+                        if let syn::Lit::Str(litstr) = syn::Lit::new(literal) {
+                            return Some(litstr.value());
+                        }
+                    }
+                };
+            }
+        }
+    }
+    None
 }
 
 fn get_innermost_type_inner(
@@ -59,8 +91,12 @@ fn get_innermost_type_inner(
 }
 
 pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
+    ////
     let name = &ast.ident;
     let generics = &ast.generics;
+    let attrs = &ast.attrs;
+    let myattr = get_attrs(attrs);
+
     let mut generic_symbols = vec![];
     let mut generic_type: Option<syn::Type> = None;
     for x in generics.type_params() {
@@ -70,9 +106,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
     let mut phantom_only = false;
 
     let (impl_generics, ty_generics, where_clause) = generics.split_for_impl();
-    eprintln!("impl_generics is {:#?}", impl_generics);
-    eprint!("ty_generics is {:#?}", ty_generics);
-    eprintln!("where_clause is {:#?}", where_clause);
+
     let fields = match &ast.data {
         syn::Data::Struct(syn::DataStruct {
             fields: syn::Fields::Named(syn::FieldsNamed { named, .. }),
@@ -167,6 +201,7 @@ pub fn body(ast: &syn::DeriveInput) -> TokenStream2 {
         generic_flag,
         generic_type,
         phantom_only,
+        myattr,
     );
 
     quote! {
@@ -184,6 +219,7 @@ fn impl_debug_func<T>(
     generic_flag: bool,
     generic_type: Option<syn::Type>,
     phantom_only: bool,
+    myattr: Option<String>, // myattr: proc_macro2::TokenStream,
 ) -> TokenStream2
 where
     T: Iterator<Item = TokenStream2>,
@@ -203,10 +239,11 @@ where
             }
         // phantom plus other fields contain generic symbol
         } else {
-            if where_clause.is_none() {
-                let generic_type = generic_type.unwrap();
+            if myattr.is_some() {
+                let something = myattr.unwrap();
+                let raw_token_stream: proc_macro2::TokenStream = something.parse().unwrap();
                 let output = quote! {
-                    impl #impl_generics  std::fmt::Debug for #name #ty_generics where #generic_type: std::fmt::Debug  {
+                    impl #impl_generics  std::fmt::Debug for #name #ty_generics where #raw_token_stream  {
                         fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
                             f.debug_struct(#string_name)
                             #(#inner_token_stream)*
@@ -216,12 +253,26 @@ where
                 };
                 output
             } else {
-                quote! {
-                    impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause  {
-                        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
-                            f.debug_struct(#string_name)
-                            #(#inner_token_stream)*
-                            .finish()
+                if where_clause.is_none() {
+                    let generic_type = generic_type.unwrap();
+                    let output = quote! {
+                        impl #impl_generics  std::fmt::Debug for #name #ty_generics where #generic_type: std::fmt::Debug  {
+                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                                f.debug_struct(#string_name)
+                                #(#inner_token_stream)*
+                                .finish()
+                            }
+                        }
+                    };
+                    output
+                } else {
+                    quote! {
+                        impl #impl_generics  std::fmt::Debug for #name #ty_generics #where_clause  {
+                            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::result::Result<(), std::fmt::Error> {
+                                f.debug_struct(#string_name)
+                                #(#inner_token_stream)*
+                                .finish()
+                            }
                         }
                     }
                 }
